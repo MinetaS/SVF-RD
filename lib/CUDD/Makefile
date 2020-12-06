@@ -1,0 +1,6 @@
+LEVEL = ../..
+CFLAGS = -O3 -w -DHAVE_IEEE_754 -DSIZEOF_VOID_P=8 -DSIZEOF_LONG=8
+LIBRARYNAME = cudd
+BUILD_ARCHIVE := 1
+
+include $(LEVEL)/Makefile.common
