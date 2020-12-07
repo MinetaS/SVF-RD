@@ -1,10 +1,9 @@
-#include "RD/RaceDetect.h"
+#include "RD/RDGeneric.h"
+#include "RD/LockObject.h"
 
 #include "SVF-FE/LLVMUtil.h"
 #include "SVF-FE/PAGBuilder.h"
 #include "WPA/Andersen.h"
-
-#include <unordered_map>
 
 /* Abusing keyword 'using namespace' is inappropriate and I won't use them here */
 // using namespace llvm;
@@ -30,8 +29,6 @@ bool isLLVMIntrinsicFunction(llvm::Instruction &inst) {
 }
 
 int main(int argc, char **argv) {
-    llvm::raw_ostream &out = SVFUtil::outs();
-
     // parse args
     int arg_num = 0;
     char **arg_value = new char *[argc];
@@ -41,6 +38,8 @@ int main(int argc, char **argv) {
     llvm::cl::ParseCommandLineOptions(arg_num, arg_value, "Race detecton based on MemorySSA and SVFG\n");
 
     delete[] arg_value;
+
+    RtDebugMode = DebugRD.getValue();
 
     // initialize data and graphs
     SVFModule *svf = LLVMModuleSet::getLLVMModuleSet()->buildSVFModule(module_names);
@@ -56,7 +55,7 @@ int main(int argc, char **argv) {
     MemSSA *mssa = svfg->getMSSA();
 
     /* Lock locations & IDs */
-    //std::vector<llvm::Instruction> lock_locations;
+    std::vector<Lock> lock_locations;
 
     for (SVFModule::iterator fit = svf->begin() ; fit != svf->end() ; ++fit) {
         const SVFFunction *function = *fit;
@@ -90,12 +89,14 @@ int main(int argc, char **argv) {
                         }
 
                         // name: unlock
-                        if (func_name.substr(pos-2, 2) == "un") {
-                            
+                        if (pos >= 2 && func_name.substr(pos-2, 2) == "un") {
+                            LockID id = Lock::addObject(func_name, true);
+                            lock_locations.push_back(Lock(&inst, id, false));
                         }
                         // name: lock
                         else {
-                            //lock_locations.push_back(inst);
+                            LockID id = Lock::addObject(func_name);
+                            lock_locations.push_back(Lock(&inst, id, true));
                         }
 
                         if (const llvm::DebugLoc &loc = inst.getDebugLoc()) {
