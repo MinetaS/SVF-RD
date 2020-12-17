@@ -37,6 +37,7 @@ vector<string> ParseArguments(int argc, char **argv);
 /* algorithm functions and macro definitions */
 bool TraverseICFG(ICFG &icfg, Lock &lock);
 bool TraverseICFG_DFS(ICFGNode *node, Lock &lock, Set<NodeID> &visited);
+bool HasSameLockID(llvm::Instruction &inst1, llvm::Instruction &inst2);
 
 // The array of synchronization range IDs creatd and stored within
 // every llvm::SmallVector which required to be specified the maximum size.
@@ -76,10 +77,17 @@ int main(int argc, char **argv) {
     PointsToMap ptsMap;
 
     for (SVFModule::iterator fit = module->begin() ; fit != module->end() ; ++fit) {
-        const SVFFunction *function = *fit;
-        out << "FUNCTION: " << function->getName() << "\n";
+        llvm::Function *function = (*fit)->getLLVMFun();
+        string func_name = function->getName();
 
-        for (llvm::Function::iterator bit = function->getLLVMFun()->begin() ; bit != function->getLLVMFun()->end() ; ++bit) {
+        out << "FUNCTION: " << func_name << "\n";
+
+        if (lock_functions.exists(func_name)) {
+            out << "  skipped\n";
+            continue;
+        }
+
+        for (llvm::Function::iterator bit = function->begin() ; bit != function->end() ; ++bit) {
             llvm::BasicBlock &bb = *bit;
 
             for (llvm::BasicBlock::iterator iit = bb.begin() ; iit != bb.end() ; ++iit) {
@@ -143,7 +151,7 @@ int main(int argc, char **argv) {
                                 }
                                 // local synchronization otherwise
                                 else {
-                                    dout << "Not implemented yet: local function " << name << "\n";
+                                    dout << "Not implemented yet: local sync function " << name << "\n";
                                 }
                             }
                         }
@@ -198,6 +206,41 @@ int main(int argc, char **argv) {
     /* ==================== Step 2 ==================== */
     // - Print all possible pairs in ptsMap
     out << "==================== STEP 2 ====================\n";
+
+    for (PointsToMap::iterator it = ptsMap.beginStore() ; it != ptsMap.endStore() ; ++it) {
+        Pointer pt = it.getPoint();
+        InstSet *set_store = it.getSet();
+
+        for (InstSet::iterator sit = set_store->begin() ; sit != set_store->end() ; ++sit) {
+            Instruction &inst1 = *(*sit);
+
+            // Load/Store pair
+            if (ptsMap.isLoadSetExists(pt)) {
+                InstSet *set_load = ptsMap.getLoadSet(pt);
+
+                for (InstSet::iterator pit = set_load->begin() ; pit != set_load->end() ; ++pit) {
+                    Instruction &inst2 = *(*pit);
+                    
+                    if (!HasSameLockID(inst1, inst2)) {
+                        out << "Pair: Store [[ " << GetInstructionLocation(inst1) << " ]], Load [[ " << GetInstructionLocation(inst2) << " ]]\n";
+                    }
+                }
+            }
+
+            // Store/Store pair
+            for (InstSet::iterator pit = set_store->begin() ; pit != set_store->end() ; ++pit) {
+                if (sit == pit) {
+                    continue;
+                }
+
+                Instruction &inst2 = *(*pit);
+
+                if (!HasSameLockID(inst1, inst2)) {
+                    out << "Pair: Store [[ " << GetInstructionLocation(inst1) << " ]], Store [[ " << GetInstructionLocation(inst2) << " ]]\n";
+                }
+            }
+        }
+    }
 
     return 0;
 }
@@ -373,11 +416,36 @@ bool TraverseICFG_DFS(ICFGNode *node, Lock &lock, Set<NodeID> &visited) {
                 ops_vec.push_back(llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(ctx, llvm::APInt(64, id))));
             }
 
-            llvm::MDTuple::get(ctx, ops_vec);
+            llvm::MDTuple *md = llvm::MDTuple::get(ctx, ops_vec);
+            inst.setMetadata("rd.sync_status", md);
         }
     }
 
     return result;
+}
+
+bool HasSameLockID(llvm::Instruction &inst1, llvm::Instruction &inst2) {
+    if (!inst1.hasMetadata("rd.sync_status") || !inst2.hasMetadata("rd.sync_status")) {
+        return false;
+    }
+
+    llvm::MDTuple *m1 = static_cast<llvm::MDTuple *>(inst1.getMetadata("rd.sync_status"));
+    llvm::MDTuple *m2 = static_cast<llvm::MDTuple *>(inst2.getMetadata("rd.sync_status"));
+
+    for (llvm::MDTuple::op_iterator it1 = m1->op_begin() ; it1 != m1->op_end() ; ++it1) {
+        const llvm::MDOperand &op1 = *it1;
+
+        for (llvm::MDTuple::op_iterator it2 = m2->op_begin() ; it2 != m2->op_end() ; ++it2) {
+            const llvm::MDOperand &op2 = *it2;
+
+            if (static_cast<llvm::ConstantInt *>(static_cast<llvm::ConstantAsMetadata *>(op1.get())->getValue())->getValue().getLimitedValue()
+             == static_cast<llvm::ConstantInt *>(static_cast<llvm::ConstantAsMetadata *>(op2.get())->getValue())->getValue().getLimitedValue()) {
+                 return true;
+             }
+        }
+    }
+
+    return false;
 }
 
 llvm::Function *GetCalleeFunction(llvm::Instruction &inst) {
@@ -405,14 +473,14 @@ bool IsLLVMIntrinsicFunction(llvm::Instruction &inst) {
     return func->getIntrinsicID() != llvm::Intrinsic::not_intrinsic;
 }
 
-bool IsStackAccess(llvm::Instruction *inst) {
-	if (llvm::AllocaInst *ai = llvm::dyn_cast<llvm::AllocaInst>(inst)) {
+bool IsStackAccess(llvm::Value *val) {
+	if (llvm::AllocaInst *ai = llvm::dyn_cast<llvm::AllocaInst>(val)) {
 		return true;
-	} else if (llvm::StoreInst *si = llvm::dyn_cast<llvm::StoreInst>(inst)) {
+	} else if (llvm::StoreInst *si = llvm::dyn_cast<llvm::StoreInst>(val)) {
 		return IsStackAccess(si->getPointerOperand());
-	} else if (llvm::LoadInst *li = llvm::dyn_cast<llvm::LoadInst>(inst)) {
+	} else if (llvm::LoadInst *li = llvm::dyn_cast<llvm::LoadInst>(val)) {
 		return IsStackAccess(li->getPointerOperand());
-	} else if (llvm::CastInst *ci = llvm::dyn_cast<llvm::CastInst>(inst)) {
+	} else if (llvm::CastInst *ci = llvm::dyn_cast<llvm::CastInst>(val)) {
 		return IsStackAccess(ci->getOperand(0));
 	}
 

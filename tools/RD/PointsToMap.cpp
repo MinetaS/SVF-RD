@@ -12,16 +12,16 @@ void PointsToMap::initStoreSet(Pointer pt) {
     _M_map_store.insert(std::pair<Pointer, InstSet *>(pt, new InstSet()));
 }
 
-bool PointsToMap::isLoadSetExists(Pointer pt) {
+bool PointsToMap::isLoadSetExists(Pointer pt) const {
     return _M_map_load.find(pt) != _M_map_load.end();
 }
 
-bool PointsToMap::isStoreSetExists(Pointer pt) {
+bool PointsToMap::isStoreSetExists(Pointer pt) const {
     return _M_map_store.find(pt) != _M_map_store.end();
 }
 
-InstSet *PointsToMap::getLoadSet(Pointer pt) {
-    __Internal_Map::iterator it = _M_map_load.find(pt);
+InstSet *PointsToMap::getLoadSet(Pointer pt) const {
+    __Internal_Map::const_iterator it = _M_map_load.find(pt);
 
     if (it == _M_map_load.end()) {
         return nullptr;
@@ -31,8 +31,8 @@ InstSet *PointsToMap::getLoadSet(Pointer pt) {
     }
 }
 
-InstSet *PointsToMap::getStoreSet(Pointer pt) {
-    __Internal_Map::iterator it = _M_map_store.find(pt);
+InstSet *PointsToMap::getStoreSet(Pointer pt) const {
+    __Internal_Map::const_iterator it = _M_map_store.find(pt);
 
     if (it == _M_map_store.end()) {
         return nullptr;
@@ -56,4 +56,20 @@ void PointsToMap::addInstructionToStoreSet(Pointer pt, InstID inst) {
     }
 
     getStoreSet(pt)->insert(inst);
+}
+
+PointsToMap::iterator PointsToMap::beginLoad() {
+    return PointsToMap::iterator(_M_map_load.begin());
+}
+
+PointsToMap::iterator PointsToMap::endLoad() {
+    return PointsToMap::iterator(_M_map_load.end());
+}
+
+PointsToMap::iterator PointsToMap::beginStore() {
+    return PointsToMap::iterator(_M_map_store.begin());
+}
+
+PointsToMap::iterator PointsToMap::endStore() {
+    return PointsToMap::iterator(_M_map_store.end());
 }
