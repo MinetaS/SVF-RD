@@ -371,13 +371,20 @@ bool TraverseICFG_DFS(ICFGNode *node, Lock &lock, Set<NodeID> &visited) {
         }
     }
 
-    if (!result && node->hasOutgoingEdge()) {
+    if (node->hasOutgoingEdge()) {
         for (ICFGNode::const_iterator it = node->OutEdgeBegin() ; it != node->OutEdgeEnd() ; ++it) {
             ICFGEdge *edge = *it;
             ICFGNode *next = edge->getDstNode();
 
             if (visited.find(next->getId()) == visited.end()) {
+                /*
+                if (next->getFun()->getLLVMFun() != node->getFun()->getLLVMFun()) {
+                    continue;
+                }
+                */
+
                 visited.insert(next->getId());
+
                 if (TraverseICFG_DFS(next, lock, visited) && !result) {
                     result = true;
                     visited.erase(next->getId());
